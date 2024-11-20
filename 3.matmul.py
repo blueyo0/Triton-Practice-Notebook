@@ -96,3 +96,69 @@ def matmul_kernel(
 def leaky_relu(x):
     x = x + 1
     return tl.where(x >= 0, x, 0.01 * x)
+
+def matmul(a, b, activation=""):
+    # Check constraints.
+    assert a.shape[1] == b.shape[0], "Incompatible dimensions"
+    assert a.is_contiguous(), "Matrix A must be contiguous"
+    M, K = a.shape
+    K, N = b.shape
+    # Allocates output.
+    c = torch.empty((M, N), device=a.device, dtype=torch.float16)
+    # 1D launch kernel where each block gets its own program.
+    grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']), )
+    matmul_kernel[grid](
+        a, b, c,  #
+        M, N, K,  #
+        a.stride(0), a.stride(1),  #
+        b.stride(0), b.stride(1),  #
+        c.stride(0), c.stride(1),  #
+        ACTIVATION=activation  #
+    )
+    return c
+
+def checkAC():
+    torch.manual_seed(0)
+    a = torch.randn((512, 512), device='cuda', dtype=torch.float16)
+    b = torch.randn((512, 512), device='cuda', dtype=torch.float16)
+    triton_output = matmul(a, b)
+    torch_output = torch.matmul(a, b)
+    print(f"triton_output={triton_output}")
+    print(f"torch_output={torch_output}")
+    if torch.allclose(triton_output, torch_output, atol=1e-2, rtol=0):
+        print("✅ Triton和Torch匹配")
+    else:
+        print("❌ Triton和Torch不匹配")
+    print(f'在torch和triton之间的最大差异是 '
+        f'{torch.max(torch.abs(torch_output - triton_output))}')
+
+@triton.testing.perf_report(
+    triton.testing.Benchmark(
+        x_names=['M', 'N', 'K'],  # 用作图表x轴的参数名
+        x_vals=[128 * i for i in range(2, 33)],  # `x_name`的不同可能值
+        line_arg='provider',  # 对应于图表中不同线条的参数名
+        line_vals=['cublas', 'triton'],  # `line_arg`的可能值
+        line_names=["cuBLAS", "Triton"],  # 线条的标签名
+        styles=[('green', '-'), ('blue', '-')],  # 线条样式
+        ylabel="TFLOPS",  # y轴的标签名
+        plot_name="matmul-performance",  # 图表的名称，也用作保存图表的文件名
+        args={},  # 其他参数
+    )
+)
+def benchmark(M, N, K, provider):
+    a = torch.randn((M, K), device='cuda', dtype=torch.float16)
+    b = torch.randn((K, N), device='cuda', dtype=torch.float16)
+    quantiles = [0.5, 0.2, 0.8]
+    if provider == 'cublas':
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: torch.matmul(a, b), quantiles=quantiles)
+    if provider == 'triton':
+        ms, min_ms, max_ms = triton.testing.do_bench(lambda: matmul(a, b), quantiles=quantiles)
+    perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
+    return perf(ms), perf(max_ms), perf(min_ms)
+
+
+
+if __name__ == "__main__":
+    print("------------------")
+    checkAC()
+    benchmark.run(show_plots=True, print_data=True, save_path='./output')
