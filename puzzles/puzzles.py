@@ -487,7 +487,32 @@ def sum_spec(x: Float32[4, 200]) -> Float32[4,]:
 
 @triton.jit
 def sum_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
-    # Finish me!
+    # ReduceSumOp
+    ''' load '''
+    # x: [N0, T] and B1 < T
+    block_id_i = tl.program_id(0) # B0
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+
+    ''' compute '''
+    # still use [B0, B1] block but use loop inside this kernel for long T
+    # because we need to get all T values to compute the reduceSum
+    # not used here:
+    #   block_id_j = tl.program_id(1) # B1
+    #   off_j = block_id_j*B1 + tl.arange(0, B1)
+    x_sum = tl.zeros((B0, 1), dtype=tl.float32)
+    for id_j in tl.range(0, T, B1):
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        # load [B0, T]
+        # get [B0, 1] 
+        x_sum += tl.sum(x, axis=1)
+    # Note: reshape 需要取得返回值
+    x_sum = tl.reshape(x_sum, (B0))
+    ''' store '''
+    tl.store(z_ptr + off_i, x_sum, mask=off_i<N0)    
+    
     return
 
 
