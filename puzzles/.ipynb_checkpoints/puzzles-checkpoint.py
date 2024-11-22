@@ -264,32 +264,18 @@ Block size `B1` is always the same as vector `y` length `N1`.
 def add_vec_spec(x: Float32[32,], y: Float32[32,]) -> Float32[32, 32]:
     return x[None, :] + y[:, None]
 
-'''
-补充说明：triton puzzle里默认的block_size/program_id设定如下：
-grid = lambda meta: (triton.cdiv(nelem["N0"], meta["B0"]),
-                        triton.cdiv(nelem.get("N1", 1), meta.get("B1", 1)),
-                        triton.cdiv(nelem.get("N2", 1), meta.get("B2", 1)))
-如果B1,B2有数值，则启动的是2D/3D的kernel和program_id
-'''
+
 @triton.jit
 def add_vec_kernel(x_ptr, y_ptr, z_ptr, N0, N1, B0: tl.constexpr, B1: tl.constexpr):
-    # row_id = tl.program_id(0) # B0
-    # col_id = tl.program_id(1) # B1
-    ''' load '''
-    offsets_x = tl.arange(0, B0)
-    offsets_y = tl.arange(0, B1)
-    x = tl.load(x_ptr + offsets_x)
-    y = tl.load(y_ptr + offsets_y)
-    ''' compute '''
-    z = x[None, :] + y[:, None]
-    ''' store '''
-    # offset_x: [[0,1,2,...,B0-1]]
-    # offset_y: [[0],[1],...,[B1-1]]
-    # offset_z should be :
-    # [ [0,1,2,...,B0], [B0+1,B0+1,B0+2,...,B0+B0], ...]
-    # so, we should use `offsets_y[:, None]*B0`
-    offsets_z = offsets_x[None, :] + offsets_y[:, None]*B0
-    tl.store(z_ptr+offsets_z, z)
+    # Finish me!
+    pid = tl.program_id(axis=0)
+
+    # load
+    offset_x = tl.arange(N0) * pid
+    offset_y = tl.arange()
+    # compute
+
+    # store
 
     return
 
@@ -315,39 +301,9 @@ def add_vec_block_spec(x: Float32[100,], y: Float32[90,]) -> Float32[90, 100]:
 def add_vec_block_kernel(
     x_ptr, y_ptr, z_ptr, N0, N1, B0: tl.constexpr, B1: tl.constexpr
 ):
-    # this is a eltwise 2d add
-    block_id_x = tl.program_id(0) # B0
-    block_id_y = tl.program_id(1) # B1
-    ''' load '''
-    offsets_x = block_id_x*B0 + tl.arange(0, B0)
-    offsets_y = block_id_y*B1 + tl.arange(0, B1)
-    mask_x = offsets_x<N0
-    mask_y = offsets_y<N1
-    x = tl.load(x_ptr + offsets_x, mask=mask_x)
-    y = tl.load(y_ptr + offsets_y, mask=mask_y)
-    ''' compute '''
-    z = x[None, :] + y[:, None]
-    ''' store '''
-    # offset_x: block_id_x*B0 + [[0,1,2,...,B0-1]]
-    # offset_y: block_id_y*B1 + [[0],[1],...,[B1-1]]
-    # offset_z should be :
-    # (assume N0 = 2xB0, N1 = 3xB1), so the program_id should be (2, 3), EltAddOp is tiled into 6 tiles in total
-    # [ [0,   1,   ...,B0-1   ]        |  [B0+0,   B0+1,   ..., N0-1   ],
-    #   [N0+0,N0+1,...,N0+B0-1]        |  [N0+B0+0,N0+B0+1,..., N0+N0-1], 
-    #   ---------------------------------------------------------------------
-    #   [2N0+0,2N0+1,...,2N0+B0-1]     |  [2N0+B0+0,2N0+B0+1,..., 2N0+N0-1],
-    #   [3N0+0,3N0+1,...,3N0+B0-1]     |  [3N0+B0+0,3N0+B0+1,..., 3N0+N0-1], 
-    # ...]  
-    # so, we should use `offsets_y[:, None]*B0`
-    offsets_z = offsets_x[None, :] + offsets_y[:, None]*N0
-    # 下面这个 mask 需要也是 2d mask
-    # 因为program_id是2d的，在外面申请z_arr时事实上是一个[N1, N0]大小的torch.Tensor
-    # creating x_ptr with shape torch.Size([100])
-    # creating y_ptr with shape torch.Size([90])  
-    # creating z_ptr with shape torch.Size([90, 100])
-    mask_z = mask_x[None, :] and mask_y[:, None]
-    tl.store(z_ptr+offsets_z, z, mask=mask_z)
-
+    block_id_x = tl.program_id(0)
+    block_id_y = tl.program_id(1)
+    # Finish me!
     return
 
 
@@ -372,25 +328,9 @@ def mul_relu_block_spec(x: Float32[100,], y: Float32[90,]) -> Float32[90, 100]:
 def mul_relu_block_kernel(
     x_ptr, y_ptr, z_ptr, N0, N1, B0: tl.constexpr, B1: tl.constexpr
 ):
-    ''' eltwise mul + relu fused in one kernel '''
     block_id_x = tl.program_id(0)
     block_id_y = tl.program_id(1)
-    # copy code from puzzle 4
-    ''' load '''
-    offsets_x = block_id_x*B0 + tl.arange(0, B0)
-    offsets_y = block_id_y*B1 + tl.arange(0, B1)
-    mask_x = offsets_x<N0
-    mask_y = offsets_y<N1
-    x = tl.load(x_ptr + offsets_x, mask=mask_x)
-    y = tl.load(y_ptr + offsets_y, mask=mask_y)
-    ''' compute '''
-    z = x[None, :] * y[:, None]
-    z = tl.where(z < 0, 0, z)
-    ''' store '''
-    offsets_z = offsets_x[None, :] + offsets_y[:, None]*N0
-    mask_z = mask_x[None, :] and mask_y[:, None]
-    tl.store(z_ptr+offsets_z, z, mask=mask_z)
-
+    # Finish me!
     return
 
 

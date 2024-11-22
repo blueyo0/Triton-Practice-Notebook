@@ -26,6 +26,7 @@ def test(puzzle, puzzle_spec, nelem={}, B={"B0": 32}, print_log=False, device="c
     tt_args = []
     for k, (v, t) in args.items():
         tt_args.append(torch.rand(*v, device=device) - 0.5)
+        print("creating", k, "with shape", tt_args[-1].shape)
         # tt_args.append(torch.ones(*v, device=device))
         if t is not None and t.annotation.dtype == "int32":
             tt_args[-1] = torch.randint(-100000, 100000, v, device=device)
