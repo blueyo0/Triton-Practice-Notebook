@@ -9,6 +9,9 @@ reference: https://zhuanlan.zhihu.com/p/684473453
 ## Triton examples
 local test of official examples
 
+currently read 3 examples
+
 ## Triton puzzles
 triton puzzles from https://github.com/srush/Triton-Puzzles and https://github.com/SiriusNEO/Triton-Puzzles-Lite
 
+currently finish 7 puzzles
