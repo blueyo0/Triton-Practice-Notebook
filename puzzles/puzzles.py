@@ -430,7 +430,39 @@ def mul_relu_block_back_kernel(
 ):
     block_id_i = tl.program_id(0)
     block_id_j = tl.program_id(1)
-    # Finish me!
+    ''' load '''
+    # x: [B1, B0//B1]
+    ''' wrong usage: '''
+    # x = tl.reshape(x, (B1, B0//B1))
+    # dz = tl.reshape(dz, (B1, B0//B1))
+    # instead, we should give 2d offset directly to load 2d data
+    off_j = block_id_j*B1 + tl.arange(0, B1)
+    offsets_y = off_j
+    off_i = block_id_i*B0 + tl.arange(0, B0)
+    offsets_x = off_i[None, :] + offsets_y[:, None] * N0 
+    mask_y = offsets_y<N1
+
+    ''' wrong usage: '''
+    # mask_x = offsets_x<(N0*N1)
+    # since the offsets_x is 2d offsets
+    # we get 2d mask_x with the following formulation:
+    mask_x = (offsets_y<N1)[:, None] and (off_i<N0)[None, :]
+
+    x = tl.load(x_ptr + offsets_x, mask=mask_x)
+    y = tl.load(y_ptr + offsets_y, mask=mask_y)
+    dz = tl.load(dz_ptr + offsets_x, mask=mask_x)
+    ''' compute '''
+    # forward: z = relu(y*x)
+    z = x * y[:, None]
+    # z_relu = tl.where(z < 0, 0, z)
+    # backward with chain from dz
+    # dx = relu求导(>0, 梯度=1; <0, 梯度=0)，然后y*x求导(always=y)
+    dx = tl.where(z < 0, 0, y[:, None]*dz)
+
+    ''' store '''
+    # offsets_dx = offsets_x + offsets_y[:, None]*N0
+    # mask_dx = mask_x and mask_y[:, None]
+    tl.store(dx_ptr+offsets_x, dx, mask=mask_x)
     return
 
 
