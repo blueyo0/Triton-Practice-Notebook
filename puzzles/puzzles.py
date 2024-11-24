@@ -552,8 +552,53 @@ def softmax_spec(x: Float32[4, 200]) -> Float32[4, 200]:
 def softmax_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
     """2 loops ver."""
     block_id_i = tl.program_id(0)
-    log2_e = 1.44269504
-    # Finish me!
+    log2_e = 1.44269504 
+    # x [N0, T] -> z [N0, T]
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    ''' compute x_max'''
+    x_max = tl.zeros((B0, 1), dtype=tl.float32)
+    for id_j in tl.range(0, T, B1):
+        ''' load '''
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        ''' compute '''
+        # load [B0, B1] for T//B1 times
+        block_x_max = tl.max(x, axis=1) # [B0, 1]
+        x_max = tl.maximum(block_x_max, x_max) # maintain the global x_max
+
+    ''' inplacely x = x-x_max & x.exp and btw compute the x_exp_sum '''
+    x_exp_sum = tl.zeros((B0, 1), dtype=tl.float32)
+    for id_j in tl.range(0, T, B1):
+        ''' load '''
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        ''' compute '''
+        x = x - x_max
+        x_exp = tl.exp2(x*log2_e)
+        x_exp_sum += tl.sum(x_exp, axis=1)
+        # ''' inplace store '''
+        # print(x_exp)
+        # tl.store(x_ptr + off_x, x_exp, mask=mask_x) 
+        
+    ''' compute final results with x_exp (cached) & x_exp_sum '''
+    for id_j in tl.range(0, T, B1):
+        ''' load '''
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        # x_exp = tl.load(x_ptr + off_x, mask=mask_x)
+        # print(x_exp)
+        ''' compute '''
+        x = x - x_max
+        x_exp = tl.exp2(x*log2_e)
+        z = x_exp / x_exp_sum
+        ''' store '''
+        tl.store(z_ptr + off_x, z, mask=mask_x)   
     return
 
 
@@ -565,6 +610,53 @@ def softmax_kernel_brute_force(
     block_id_i = tl.program_id(0)
     log2_e = 1.44269504
     # Finish me!
+    # x [N0, T] -> z [N0, T]
+    # triton recommmand use exp2 instead of exp, and 
+    # exp(x) = exp2(log2_e * x)
+    ''' load '''
+    off_i = block_id_i * B0 + tl.arange(0, B0)
+    ''' compute '''
+    # compute x_max
+    x_max = tl.zeros((B0, 1), dtype=tl.float32)
+    for id_j in tl.range(0, T, B1):
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        # load [B0, B1] for T//B1 times
+        block_x_max = tl.max(x, axis=1) # [B0, 1]
+        x_max = tl.maximum(block_x_max, x_max) # maintain the global x_max
+
+    # inplacely x = x-x_max & x.exp
+    # and btw compute the x_exp_sum
+    x_exp_sum = tl.zeros((B0, 1), dtype=tl.float32)
+    for id_j in tl.range(0, T, B1):
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        # load [B0, B1] for T//B1 times
+        x = x - x_max
+        x_exp = tl.exp2(x*log2_e)
+        # [debug] the above get right values 
+        x_exp_sum += tl.sum(x_exp, axis=1)
+        # the above exp_sum is wrong, maybe separate compute sum induce errors?
+        # [update] 看起来e_exp_sum 的计算存在一些误差，但是store x_exp 再 load 似乎也影响很大
+        # [Wrong usage]
+        # tl.store(x_ptr + off_x, x_exp, mask=mask_x) 
+        
+    # finally x_exp / x_exp_sum
+    for id_j in tl.range(0, T, B1):
+        off_j = id_j + tl.arange(0, B1)
+        off_x = off_i[:, None] * T + off_j[None, :]
+        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        x = tl.load(x_ptr + off_x, mask=mask_x)
+        # load [B0, B1] for T//B1 times
+        x = x - x_max
+        x_exp = tl.exp2(x*log2_e)
+        z = x_exp / x_exp_sum
+        ''' store '''
+        tl.store(z_ptr + off_x, z, mask=mask_x)   
     return
 
 
