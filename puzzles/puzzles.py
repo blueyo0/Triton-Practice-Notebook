@@ -345,7 +345,7 @@ def add_vec_block_kernel(
     # creating x_ptr with shape torch.Size([100])
     # creating y_ptr with shape torch.Size([90])  
     # creating z_ptr with shape torch.Size([90, 100])
-    mask_z = mask_x[None, :] and mask_y[:, None]
+    mask_z = mask_x[None, :] & mask_y[:, None]
     tl.store(z_ptr+offsets_z, z, mask=mask_z)
 
     return
@@ -388,7 +388,7 @@ def mul_relu_block_kernel(
     z = tl.where(z < 0, 0, z)
     ''' store '''
     offsets_z = offsets_x[None, :] + offsets_y[:, None]*N0
-    mask_z = mask_x[None, :] and mask_y[:, None]
+    mask_z = mask_x[None, :] & mask_y[:, None]
     tl.store(z_ptr+offsets_z, z, mask=mask_z)
 
     return
@@ -446,7 +446,7 @@ def mul_relu_block_back_kernel(
     # mask_x = offsets_x<(N0*N1)
     # since the offsets_x is 2d offsets
     # we get 2d mask_x with the following formulation:
-    mask_x = (offsets_y<N1)[:, None] and (off_i<N0)[None, :]
+    mask_x = (offsets_y<N1)[:, None] & (off_i<N0)[None, :]
 
     x = tl.load(x_ptr + offsets_x, mask=mask_x)
     y = tl.load(y_ptr + offsets_y, mask=mask_y)
@@ -499,17 +499,16 @@ def sum_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
     # not used here:
     #   block_id_j = tl.program_id(1) # B1
     #   off_j = block_id_j*B1 + tl.arange(0, B1)
-    x_sum = tl.zeros((B0, 1), dtype=tl.float32)
+    x_sum = tl.zeros([B0], dtype=tl.float32)
     for id_j in tl.range(0, T, B1):
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        mask_x = (off_i[:, None] < N0) & (off_j[None, :] < T)
         x = tl.load(x_ptr + off_x, mask=mask_x)
         # load [B0, T]
         # get [B0, 1] 
         x_sum += tl.sum(x, axis=1)
     # Note: reshape 需要取得返回值
-    x_sum = tl.reshape(x_sum, (B0))
     ''' store '''
     tl.store(z_ptr + off_i, x_sum, mask=off_i<N0)    
     
@@ -556,14 +555,14 @@ def softmax_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
     # x [N0, T] -> z [N0, T]
     off_i = block_id_i * B0 + tl.arange(0, B0)
     ''' compute x_max & x_exp_sum within 1 loop'''
-    prev_x_max = tl.zeros((B0, 1), dtype=tl.float32)
-    x_max = tl.zeros((B0, 1), dtype=tl.float32)
-    x_exp_sum = tl.zeros((B0, 1), dtype=tl.float32)
+    prev_x_max = tl.zeros([B0], dtype=tl.float32)
+    x_max = tl.zeros([B0], dtype=tl.float32)
+    x_exp_sum = tl.zeros([B0], dtype=tl.float32)
     for id_j in tl.range(0, T, B1):
         ''' load '''
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        mask_x = (off_i[:, None] < N0) & (off_j[None, :] < T)
         x = tl.load(x_ptr + off_x, mask=mask_x) # load [B0, B1] for T//B1 times
         ''' compute '''
         block_x_max = tl.max(x, axis=1) # [B0, 1]
@@ -585,7 +584,7 @@ def softmax_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
         ''' load '''
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        mask_x = (off_i[:, None] < N0) & (off_j[None, :] < T)
         x = tl.load(x_ptr + off_x, mask=mask_x)
         ''' compute '''
         x = x - x_max
@@ -611,11 +610,11 @@ def softmax_kernel_brute_force(
     off_i = block_id_i * B0 + tl.arange(0, B0)
     ''' compute '''
     # compute x_max
-    x_max = tl.zeros((B0, 1), dtype=tl.float32)
+    x_max = tl.zeros([B0], dtype=tl.float32)
     for id_j in tl.range(0, T, B1):
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        mask_x = (off_i[:, None] < N0) & (off_j[None, :] < T)
         x = tl.load(x_ptr + off_x, mask=mask_x)
         # load [B0, B1] for T//B1 times
         block_x_max = tl.max(x, axis=1) # [B0, 1]
@@ -623,11 +622,11 @@ def softmax_kernel_brute_force(
 
     # inplacely x = x-x_max & x.exp
     # and btw compute the x_exp_sum
-    x_exp_sum = tl.zeros((B0, 1), dtype=tl.float32)
+    x_exp_sum = tl.zeros([B0], dtype=tl.float32)
     for id_j in tl.range(0, T, B1):
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        mask_x = (off_i[:, None] < N0) & (off_j[None, :] < T)
         x = tl.load(x_ptr + off_x, mask=mask_x)
         # load [B0, B1] for T//B1 times
         x = x - x_max
@@ -643,7 +642,7 @@ def softmax_kernel_brute_force(
     for id_j in tl.range(0, T, B1):
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
+        mask_x = (off_i[:, None] < N0) & (off_j[None, :] < T)
         x = tl.load(x_ptr + off_x, mask=mask_x)
         # load [B0, B1] for T//B1 times
         x = x - x_max
@@ -689,6 +688,7 @@ def flashatt_kernel(
     log2_e = 1.44269504
     myexp = lambda x: tl.exp2(log2_e * x)
     # Finish me!
+
     return
 
 
