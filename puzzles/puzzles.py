@@ -555,34 +555,30 @@ def softmax_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
     log2_e = 1.44269504 
     # x [N0, T] -> z [N0, T]
     off_i = block_id_i * B0 + tl.arange(0, B0)
-    ''' compute x_max'''
+    ''' compute x_max & x_exp_sum within 1 loop'''
+    prev_x_max = tl.zeros((B0, 1), dtype=tl.float32)
     x_max = tl.zeros((B0, 1), dtype=tl.float32)
-    for id_j in tl.range(0, T, B1):
-        ''' load '''
-        off_j = id_j + tl.arange(0, B1)
-        off_x = off_i[:, None] * T + off_j[None, :]
-        mask_x = off_i[:, None] < N0 and off_j[None, :] < T
-        x = tl.load(x_ptr + off_x, mask=mask_x)
-        ''' compute '''
-        # load [B0, B1] for T//B1 times
-        block_x_max = tl.max(x, axis=1) # [B0, 1]
-        x_max = tl.maximum(block_x_max, x_max) # maintain the global x_max
-
-    ''' inplacely x = x-x_max & x.exp and btw compute the x_exp_sum '''
     x_exp_sum = tl.zeros((B0, 1), dtype=tl.float32)
     for id_j in tl.range(0, T, B1):
         ''' load '''
         off_j = id_j + tl.arange(0, B1)
         off_x = off_i[:, None] * T + off_j[None, :]
         mask_x = off_i[:, None] < N0 and off_j[None, :] < T
-        x = tl.load(x_ptr + off_x, mask=mask_x)
+        x = tl.load(x_ptr + off_x, mask=mask_x) # load [B0, B1] for T//B1 times
         ''' compute '''
-        x = x - x_max
-        x_exp = tl.exp2(x*log2_e)
-        x_exp_sum += tl.sum(x_exp, axis=1)
-        # ''' inplace store '''
-        # print(x_exp)
-        # tl.store(x_ptr + off_x, x_exp, mask=mask_x) 
+        block_x_max = tl.max(x, axis=1) # [B0, 1]
+        x_max = tl.maximum(block_x_max, x_max) # maintain the global x_max
+        # 当loop计算x_max时，顺带计算当前最精准的x_exp_sum
+        # 每个step都复用一次 exp(x-x_max) = exp(x-block_x_max) / exp(x_max-block_x_max)
+        # e.g. 假设4个block_x_max 为 1,3,2,4，真正的 x_exp_sum=exp(x-4)
+        # step1: block_x_max=1, curr_x_max=1, x_exp_sum^1 = 0*exp(0-1) + exp(x-1) 其实应该除以exp(3)，但是此时不知道x_max，所以不知道差值 
+        # step2: block_x_max=3, curr_x_max=3, x_exp_sum^2 = x_exp_sum^1/exp(2) + exp(x-3) 修正所有值到假设x_max=3
+        # step2: block_x_max=2, curr_x_max=3, x_exp_sum^3 = x_exp_sum^2/exp(0) + exp(x-3) x_max假设不变，所以继续这么算
+        # step2: block_x_max=4, curr_x_max=4, x_exp_sum^4 = x_exp_sum^3/exp(1) + exp(x-4) 更新了x_max，再次更新旧的x_exp_sum
+        x_exp = tl.exp2(log2_e*x)
+        factor = tl.exp2(log2_e*(prev_x_max - x_max))
+        x_exp_sum = x_exp_sum * factor + tl.sum(x_exp - x_max, axis=1)
+        prev_x_max = x_max
         
     ''' compute final results with x_exp (cached) & x_exp_sum '''
     for id_j in tl.range(0, T, B1):
@@ -591,8 +587,6 @@ def softmax_kernel(x_ptr, z_ptr, N0, N1, T, B0: tl.constexpr, B1: tl.constexpr):
         off_x = off_i[:, None] * T + off_j[None, :]
         mask_x = off_i[:, None] < N0 and off_j[None, :] < T
         x = tl.load(x_ptr + off_x, mask=mask_x)
-        # x_exp = tl.load(x_ptr + off_x, mask=mask_x)
-        # print(x_exp)
         ''' compute '''
         x = x - x_max
         x_exp = tl.exp2(x*log2_e)
@@ -641,7 +635,7 @@ def softmax_kernel_brute_force(
         # [debug] the above get right values 
         x_exp_sum += tl.sum(x_exp, axis=1)
         # the above exp_sum is wrong, maybe separate compute sum induce errors?
-        # [update] 看起来e_exp_sum 的计算存在一些误差，但是store x_exp 再 load 似乎也影响很大
+        # [update] save and then re-load is time-consuming and accuracy-incorrect
         # [Wrong usage]
         # tl.store(x_ptr + off_x, x_exp, mask=mask_x) 
         
