@@ -1,0 +1,1 @@
+clear && TRITON_INTERPRET=1 python puzzles.py -a
