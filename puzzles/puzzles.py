@@ -690,41 +690,7 @@ def flashatt_kernel(
     # ----------------------------------------
     off_i = block_id_i * B0 + tl.arange(0, B0)
     mask_i = off_i < N0
-    inf = 1.0e6
-
-    # Need `other`!!!
-    q = tl.load(q_ptr + off_i, mask=mask_i)
-    # l_i
-    exp_sum = tl.zeros((B0,), dtype=tl.float32)
-    # m_i
-    qk_max = tl.full((B0,), -inf, dtype=tl.float32)
-    z = tl.zeros((B0,), dtype=tl.float32)
-
-    for id_j in tl.range(0, T, B1):
-        off_j = id_j + tl.arange(0, B1)
-        mask_j = off_j < T
-        mask_ij = mask_i[:, None] & mask_j[None, :]
-
-        k = tl.load(k_ptr + off_j, mask=mask_j)
-        qk = q[:, None] * k[None, :] + tl.where(mask_ij, 0, -1.0e6)
-        # print(qk.shape)
-
-        # m_ij
-        new_max = tl.maximum(tl.max(qk, axis=1), qk_max)
-        qk_exp = tl.exp2(log2_e * (qk - new_max[:, None]))
-        # alpha
-        factor = tl.exp2(log2_e * (qk_max - new_max))
-        # l_ij
-        new_exp_sum = exp_sum * factor + tl.sum(qk_exp, axis=1)
-        v = tl.load(v_ptr + off_j, mask=mask_j, other=0.0)
-        z = z * factor + tl.sum(qk_exp * v[None, :], axis=1)
-
-        qk_max = new_max
-        exp_sum = new_exp_sum
-
-    z = z / exp_sum
-    tl.store(z_ptr + off_i, z, mask=mask_i)
-
+    # TODO
     return
 
 
