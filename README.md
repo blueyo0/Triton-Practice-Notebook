@@ -1,6 +1,6 @@
 # Triton Practice
 
-tested on single NVIDIA A10
+tested on single NVIDIA A10 22G and 3060 6G
 
 examples: https://triton-lang.org/main/getting-started/tutorials/index.html
 
