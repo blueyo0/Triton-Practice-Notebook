@@ -83,5 +83,4 @@ def benchmark(size, provider):
 
 if __name__=="__main__":
     checkAC()
-    print(benchmark.run)
-    # benchmark.run(print_data=True, show_plots=True, save_path='./output')
+    benchmark.run(print_data=True, show_plots=True, save_path='./output/1.vector_add')

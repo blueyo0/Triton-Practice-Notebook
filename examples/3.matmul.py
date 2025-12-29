@@ -161,4 +161,4 @@ def benchmark(M, N, K, provider):
 if __name__ == "__main__":
     print("------------------")
     checkAC()
-    benchmark.run(show_plots=True, print_data=True, save_path='./output')
+    benchmark.run(show_plots=True, print_data=True, save_path='./output/3.matmul')

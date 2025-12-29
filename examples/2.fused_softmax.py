@@ -123,4 +123,4 @@ def benchmark(M, N, provider):
 
 if __name__=="__main__":
     # checkAC()
-    benchmark.run(show_plots=True, print_data=True, save_path='./output')
+    benchmark.run(show_plots=True, print_data=True, save_path='./output/2.fused_softmax')

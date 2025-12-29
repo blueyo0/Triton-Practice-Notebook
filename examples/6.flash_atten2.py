@@ -623,4 +623,4 @@ def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, dev
 
 if __name__ == "__main__":
     # only works on post-Ampere GPUs right now
-    bench_flash_attention.run(show_plots=True, print_data=True, save_path='./output')
+    bench_flash_attention.run(show_plots=True, print_data=True, save_path='./output/6.flash_atten2')
